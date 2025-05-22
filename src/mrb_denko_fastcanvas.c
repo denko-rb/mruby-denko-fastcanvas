@@ -346,6 +346,61 @@ mrb_canvas_ellipse(mrb_state* mrb, mrb_value self) {
   return mrb_nil_value();
 }
 
+static mrb_value
+mrb_canvas_raw_char(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_value char_bytes;
+  mrb_int x, y, width, scale;
+  mrb_value kwargs = mrb_nil_value();
+  mrb_get_args(mrb, "oiiii|H", &char_bytes, &x, &y, &width, &scale, &kwargs);
+
+  // Get color from args or canvas
+  mrb_int color = -1;
+  if (!mrb_nil_p(kwargs)) {
+    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
+    color = mrb_fixnum(mrb_color);
+  }
+  if (color == -1) color = canvas.fill_color;
+
+  // How many total bytes
+  mrb_int byte_count = RARRAY_LEN(char_bytes);
+
+  // How many vertical chunks. Split by displayed font width, allowing partial last.
+  int chunks = byte_count / width;
+  if (byte_count % width > 0) chunks += 1;
+  int y_current = y;
+
+  for (int chunk=0; chunk<chunks; chunk++) {
+    for (int column=0; column<width; column++) {
+      // Which byte
+      int index = chunk*width + column;
+      if (index >= byte_count) continue;
+
+      // Get it and show the pixels.
+      uint8_t bite = (uint8_t)mrb_as_int(mrb, mrb_ary_entry(char_bytes, index));
+      for (int bit=0; bit < 8; bit++) {
+        // Is it filled or clear?
+        int color_val = ((bite >> bit) & 0b1) ? color : 0;
+
+        for (int sx=0; sx<scale; sx++){
+          for(int sy=0; sy<scale; sy++){
+            c_canvas_pixel(mrb, &canvas,
+                           x + (column * scale) + sx,
+                           y_current + (bit * scale) + sy,
+                           color_val);
+          }
+        }
+      }
+    }
+    y_current += (8 * scale);
+  }
+  return mrb_nil_value();
+}
+
 void
 mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   // Denko module
@@ -363,6 +418,7 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   mrb_define_method(mrb, mrb_Canvas, "rectangle",   mrb_canvas_rectangle,   MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "path",        mrb_canvas_path,        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "ellipse",     mrb_canvas_ellipse,     MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "raw_char",    mrb_canvas_raw_char,    MRB_ARGS_REQ(5) | MRB_ARGS_OPT(1));
 }
 
 void
