@@ -265,6 +265,87 @@ mrb_canvas_path(mrb_state* mrb, mrb_value self) {
   }
 }
 
+static void
+c_canvas_ellipse(mrb_state* mrb, canvas_t* c, int x_center, int y_center, int a, int b, int color, int filled) {
+  // Start position
+  int x = -a;
+  int y = 0;
+
+  // Precompute x and y increments for each step
+  int x_increment = 2 * b * b;
+  int y_increment = 2 * a * a;
+
+  // Start errors
+  int dx = (1 + (2 * x)) * b * b;
+  int dy = x * x;
+  int e1 = dx + dy;
+  int e2 = dx;
+
+  // Since starting at max negative X, continue until x is 0
+  while (x <= 0) {
+    if (filled) {
+      // Fill quadrants using horizontal lines
+      c_canvas_line(mrb, c, x_center - x, y_center + y, x_center + x, y_center + y, color);
+      c_canvas_line(mrb, c, x_center - x, y_center - y, x_center + x, y_center - y, color);
+    } else {
+      // Stroke quadrants in order, as if y-axis is reversed and going counter-clockwise from +ve X.
+      c_canvas_pixel(mrb, c, x_center - x, y_center - y, color);
+      c_canvas_pixel(mrb, c, x_center + x, y_center - y, color);
+      c_canvas_pixel(mrb, c, x_center + x, y_center + y, color);
+      c_canvas_pixel(mrb, c, x_center - x, y_center + y, color);
+    }
+
+    e2 = 2 * e1;
+    if (e2 >= dx) {
+      x += 1;
+      dx += x_increment;
+      e1 += dx;
+    }
+    if (e2 <= dy) {
+      y  += 1;
+      dy += y_increment;
+      e1 += dy;
+    }
+  }
+
+  // Continue if y hasn't reached the vertical size
+  while (y < b) {
+    y += 1;
+    c_canvas_pixel(mrb, c, x_center, y_center + y, color);
+    c_canvas_pixel(mrb, c, x_center, y_center - y, color);
+  }
+}
+
+static mrb_value
+mrb_canvas_ellipse(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_int x_center, y_center, a, b;
+  mrb_value kwargs = mrb_nil_value();
+  mrb_get_args(mrb, "iiii|H", &x_center, &y_center, &a, &b, &kwargs);
+
+  // Get color from args or canvas
+  mrb_int color = -1;
+  if (!mrb_nil_p(kwargs)) {
+    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
+    color = mrb_fixnum(mrb_color);
+  }
+  if (color == -1) color = canvas.fill_color;
+
+  // Get filled from args or default false;
+  mrb_bool filled = FALSE;
+  if (!mrb_nil_p(kwargs)) {
+    mrb_value mrb_filled = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "filled")), mrb_false_value());
+    filled = mrb_bool(mrb_filled);
+  }
+
+  c_canvas_ellipse(mrb, &canvas, x_center, y_center, a, b, color, filled);
+  return mrb_nil_value();
+}
+
 void
 mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   // Denko module
@@ -281,6 +362,7 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   mrb_define_method(mrb, mrb_Canvas, "line",        mrb_canvas_line,        MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "rectangle",   mrb_canvas_rectangle,   MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "path",        mrb_canvas_path,        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "ellipse",     mrb_canvas_ellipse,     MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
 }
 
 void
