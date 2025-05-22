@@ -16,6 +16,7 @@ typedef struct {
   mrb_bool invert_x;
   mrb_bool invert_y;
   mrb_bool swap_xy;
+  mrb_int fill_color;
 } canvas_t;
 
 // Get the ivars from the ruby Canvas once.
@@ -30,6 +31,7 @@ mrb_get_canvas_data(mrb_state* mrb, mrb_value self, canvas_t* canvas) {
   canvas->invert_x     = mrb_bool(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@invert_x")));
   canvas->invert_y     = mrb_bool(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@invert_y")));
   canvas->swap_xy      = mrb_bool(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@swap_xy")));
+  canvas->fill_color   = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@fill_color")));
 }
 
 //
@@ -73,15 +75,22 @@ c_canvas_pixel(mrb_state* mrb, canvas_t* c, int x, int y, int color) {
 
 static mrb_value
 mrb_canvas_pixel(mrb_state* mrb, mrb_value self) {
-  mrb_int x, y;
-  mrb_value kwargs;
-  mrb_get_args(mrb, "iiH", &x, &y, &kwargs);
-
-  mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(0));
-  mrb_int color = mrb_fixnum(mrb_color);
-
+  // Get canvas ivars
   canvas_t canvas;
   mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_int x, y;
+  mrb_value kwargs = mrb_nil_value();
+  mrb_get_args(mrb, "ii|H", &x, &y, &kwargs);
+
+  // Get color from args or canvas
+  mrb_int color = -1;
+  if (!mrb_nil_p(kwargs)) {
+    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
+    color = mrb_fixnum(mrb_color);
+  }
+  if (color == -1) color = canvas.fill_color;
 
   c_canvas_pixel(mrb, &canvas, x, y, color);
   return mrb_nil_value();
@@ -164,17 +173,54 @@ c_canvas_line(mrb_state* mrb, canvas_t* c, int x1, int y1, int x2, int y2, int c
 
 static mrb_value
 mrb_canvas_line(mrb_state* mrb, mrb_value self) {
-  mrb_int x1, y1, x2, y2;
-  mrb_value kwargs;
-  mrb_get_args(mrb, "iiiiH", &x1, &y1, &x2, &y2, &kwargs);
-
-  mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(0));
-  mrb_int color = mrb_fixnum(mrb_color);
-
+  // Get canvas ivars
   canvas_t canvas;
   mrb_get_canvas_data(mrb, self, &canvas);
 
+  // Get args
+  mrb_int x1, y1, x2, y2;
+  mrb_value kwargs = mrb_nil_value();
+  mrb_get_args(mrb, "iiii|H", &x1, &y1, &x2, &y2, &kwargs);
+
+  // Get color from args or canvas
+  mrb_int color = -1;
+  if (!mrb_nil_p(kwargs)) {
+    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
+    color = mrb_fixnum(mrb_color);
+  }
+  if (color == -1) color = canvas.fill_color;
+
   c_canvas_line(mrb, &canvas, x1, y1, x2, y2, color);
+  return mrb_nil_value();
+}
+
+//
+// #rectangle
+//
+static mrb_value
+mrb_canvas_rectangle(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_int x, y, w, h;
+  mrb_value kwargs = mrb_nil_value();
+  mrb_get_args(mrb, "iiii|H", &x, &y, &w, &h, &kwargs);
+
+  // Get color from args or canvas
+  mrb_int color = -1;
+  if (!mrb_nil_p(kwargs)) {
+    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
+    color = mrb_fixnum(mrb_color);
+  }
+  if (color == -1) color = canvas.fill_color;
+
+  // Rectangles and squares as a combination of lines.
+  c_canvas_line(mrb, &canvas, x,   y,   x+w,  y,    color);
+  c_canvas_line(mrb, &canvas, x+w, y,   x+w,  y+h,  color);
+  c_canvas_line(mrb, &canvas, x+w, y+h, x,    y+h,  color);
+  c_canvas_line(mrb, &canvas, x,   y+h, x,    y,    color);
   return mrb_nil_value();
 }
 
@@ -190,8 +236,9 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   struct RClass *mrb_Canvas = mrb_define_class_under(mrb, mrb_Denko_Display, "Canvas", mrb->object_class);
 
   // Optimized pixel methods for Canvas
-  mrb_define_method(mrb, mrb_Canvas, "pixel",       mrb_canvas_pixel,       MRB_ARGS_REQ(3));
-  mrb_define_method(mrb, mrb_Canvas, "line",        mrb_canvas_line,        MRB_ARGS_REQ(4));
+  mrb_define_method(mrb, mrb_Canvas, "pixel",       mrb_canvas_pixel,       MRB_ARGS_REQ(2) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "line",        mrb_canvas_line,        MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "rectangle",   mrb_canvas_rectangle,   MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
 }
 
 void
