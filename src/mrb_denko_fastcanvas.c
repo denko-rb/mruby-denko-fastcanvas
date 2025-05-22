@@ -224,6 +224,47 @@ mrb_canvas_rectangle(mrb_state* mrb, mrb_value self) {
   return mrb_nil_value();
 }
 
+//
+// #path
+//
+static mrb_value
+mrb_canvas_path(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_value mrb_points;
+  mrb_value kwargs = mrb_nil_value();
+  mrb_get_args(mrb, "o|H", &mrb_points, &kwargs);
+
+  // Get color from args or canvas
+  mrb_int color = -1;
+  if (!mrb_nil_p(kwargs)) {
+    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
+    color = mrb_fixnum(mrb_color);
+  }
+  if (color == -1) color = canvas.fill_color;
+
+  mrb_int point_count = RARRAY_LEN(mrb_points);
+  mrb_int x1;
+  mrb_int y1;
+
+  mrb_value point;
+  point = mrb_ary_entry(mrb_points, 0);
+  mrb_int x2 = mrb_as_int(mrb, mrb_ary_entry(point, 0));
+  mrb_int y2 = mrb_as_int(mrb, mrb_ary_entry(point, 1));
+
+  for (int i=1; i<point_count; i++) {
+    x1 = x2;
+    y1 = y2;
+    point = mrb_ary_entry(mrb_points, i);
+    x2 = mrb_as_int(mrb, mrb_ary_entry(point, 0));
+    y2 = mrb_as_int(mrb, mrb_ary_entry(point, 1));
+    c_canvas_line(mrb, &canvas, x1, y1, x2, y2, color);
+  }
+}
+
 void
 mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   // Denko module
@@ -239,6 +280,7 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   mrb_define_method(mrb, mrb_Canvas, "pixel",       mrb_canvas_pixel,       MRB_ARGS_REQ(2) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "line",        mrb_canvas_line,        MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "rectangle",   mrb_canvas_rectangle,   MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "path",        mrb_canvas_path,        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
 }
 
 void
