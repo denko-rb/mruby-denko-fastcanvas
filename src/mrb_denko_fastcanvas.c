@@ -116,7 +116,7 @@ c_canvas_line(mrb_state* mrb, canvas_t* c, int x1, int y1, int x2, int y2, int c
     for(int y=y1; y<=y2; y++) {
       c_canvas_pixel(mrb, c, x1, y, color);
     }
-    return mrb_nil_value();
+    return;
   }
 
   // Optimize horizontal lines.
@@ -130,7 +130,7 @@ c_canvas_line(mrb_state* mrb, canvas_t* c, int x1, int y1, int x2, int y2, int c
     for(int x=x1; x<=x2; x++) {
       c_canvas_pixel(mrb, c, x, y1, color);
     }
-    return mrb_nil_value();
+    return;
   }
 
   // Bresenham's algorithm for sloped lines.
