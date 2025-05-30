@@ -8,37 +8,76 @@
 // C struct to avoid constantly getting ivars.
 typedef struct {
   mrb_value framebuffers;
-  mrb_int colors;
-  mrb_int columns;
-  mrb_int rows;
-  mrb_int x_max;
-  mrb_int y_max;
-  mrb_bool invert_x;
-  mrb_bool invert_y;
-  mrb_bool swap_xy;
-  mrb_int fill_color;
+  mrb_int   colors;
+  mrb_int   columns;
+  mrb_int   rows;
+  mrb_int   x_max;
+  mrb_int   y_max;
+  mrb_bool  invert_x;
+  mrb_bool  invert_y;
+  mrb_bool  swap_xy;
+  mrb_int   current_color;
 } canvas_t;
 
 // Get the ivars from the ruby Canvas once.
 static void
 mrb_get_canvas_data(mrb_state* mrb, mrb_value self, canvas_t* canvas) {
-  canvas->framebuffers = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@framebuffers"));
-  canvas->colors       = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@colors")));
-  canvas->columns      = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@columns")));
-  canvas->rows         = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@rows")));
-  canvas->x_max        = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@x_max")));
-  canvas->y_max        = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@y_max")));
-  canvas->invert_x     = mrb_bool(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@invert_x")));
-  canvas->invert_y     = mrb_bool(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@invert_y")));
-  canvas->swap_xy      = mrb_bool(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@swap_xy")));
-  canvas->fill_color   = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@fill_color")));
+  canvas->framebuffers  = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@framebuffers"));
+  canvas->colors        = mrb_fixnum(mrb_iv_get(mrb, self,  mrb_intern_lit(mrb, "@colors")));
+  canvas->columns       = mrb_fixnum(mrb_iv_get(mrb, self,  mrb_intern_lit(mrb, "@columns")));
+  canvas->rows          = mrb_fixnum(mrb_iv_get(mrb, self,  mrb_intern_lit(mrb, "@rows")));
+  canvas->x_max         = mrb_fixnum(mrb_iv_get(mrb, self,  mrb_intern_lit(mrb, "@x_max")));
+  canvas->y_max         = mrb_fixnum(mrb_iv_get(mrb, self,  mrb_intern_lit(mrb, "@y_max")));
+  canvas->invert_x      = mrb_bool(mrb_iv_get(mrb, self,    mrb_intern_lit(mrb, "@invert_x")));
+  canvas->invert_y      = mrb_bool(mrb_iv_get(mrb, self,    mrb_intern_lit(mrb, "@invert_y")));
+  canvas->swap_xy       = mrb_bool(mrb_iv_get(mrb, self,    mrb_intern_lit(mrb, "@swap_xy")));
+  canvas->current_color = mrb_fixnum(mrb_iv_get(mrb, self,  mrb_intern_lit(mrb, "@current_color")));
 }
 
 //
-// #pixel
+// #_get_pixel
+//
+static int
+c_canvas_get_pixel(mrb_state* mrb, canvas_t* c, int x, int y) {
+  int byte_index = ((y / 8) * c->columns) + x;
+  int bit = y % 8;
+
+  // If bit not set in any framebuffer, color is 0.
+  int color = 0;
+
+  // Check all the framebuffers. If bit set, color is i.
+  for(int i=1; i <= c->colors; i++) {
+    mrb_value fb = mrb_ary_ref(mrb, c->framebuffers, i-1);
+    mrb_value mrb_fb_byte = mrb_ary_ref(mrb, fb, byte_index);
+    mrb_int fb_byte = mrb_fixnum(mrb_fb_byte);
+    if ((fb_byte >> bit) & 0b1) {
+      color = i;
+      break;
+    }
+  }
+
+  return color;
+}
+
+static mrb_value
+mrb_canvas_get_pixel(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_int x, y;
+  mrb_get_args(mrb, "ii", &x, &y);
+
+  int color = c_canvas_get_pixel(mrb, &canvas, x, y);
+  return mrb_fixnum_value(color);
+}
+
+//
+// #_set_pixel
 //
 static void
-c_canvas_pixel(mrb_state* mrb, canvas_t* c, int x, int y, int color) {
+c_canvas_set_pixel(mrb_state* mrb, canvas_t* c, int x, int y, int color) {
   // Reverse current canvas transformations.
   mrb_int xt = (c->invert_x) ? c->x_max - x : x;
   mrb_int yt = (c->invert_y) ? c->y_max - y : y;
@@ -74,30 +113,24 @@ c_canvas_pixel(mrb_state* mrb, canvas_t* c, int x, int y, int color) {
 }
 
 static mrb_value
-mrb_canvas_pixel(mrb_state* mrb, mrb_value self) {
+mrb_canvas_set_pixel(mrb_state* mrb, mrb_value self) {
   // Get canvas ivars
   canvas_t canvas;
   mrb_get_canvas_data(mrb, self, &canvas);
 
   // Get args
   mrb_int x, y;
-  mrb_value kwargs = mrb_nil_value();
-  mrb_get_args(mrb, "ii|H", &x, &y, &kwargs);
-
-  // Get color from args or canvas
   mrb_int color = -1;
-  if (!mrb_nil_p(kwargs)) {
-    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
-    color = mrb_fixnum(mrb_color);
-  }
-  if (color == -1) color = canvas.fill_color;
+  mrb_get_args(mrb, "ii|i", &x, &y, &color);
+  if (color == -1) color = canvas.current_color;
 
-  c_canvas_pixel(mrb, &canvas, x, y, color);
+  c_canvas_set_pixel(mrb, &canvas, x, y, color);
+
   return mrb_nil_value();
 }
 
 //
-// #line
+// #_line
 //
 static void
 c_canvas_line(mrb_state* mrb, canvas_t* c, int x1, int y1, int x2, int y2, int color) {
@@ -114,7 +147,7 @@ c_canvas_line(mrb_state* mrb, canvas_t* c, int x1, int y1, int x2, int y2, int c
       y2 = t;
     }
     for(int y=y1; y<=y2; y++) {
-      c_canvas_pixel(mrb, c, x1, y, color);
+      c_canvas_set_pixel(mrb, c, x1, y, color);
     }
     return;
   }
@@ -128,7 +161,7 @@ c_canvas_line(mrb_state* mrb, canvas_t* c, int x1, int y1, int x2, int y2, int c
       x2 = t;
     }
     for(int x=x1; x<=x2; x++) {
-      c_canvas_pixel(mrb, c, x, y1, color);
+      c_canvas_set_pixel(mrb, c, x, y1, color);
     }
     return;
   }
@@ -151,7 +184,7 @@ c_canvas_line(mrb_state* mrb, canvas_t* c, int x1, int y1, int x2, int y2, int c
   int y = y1;
   int error = 0;
   for (int i=0; i<=step_count; i++) {
-    c_canvas_pixel(mrb, c, x, y, color);
+    c_canvas_set_pixel(mrb, c, x, y, color);
 
     if (step_axis == 0) { // Step on x-axis
       x += x_step;
@@ -179,23 +212,17 @@ mrb_canvas_line(mrb_state* mrb, mrb_value self) {
 
   // Get args
   mrb_int x1, y1, x2, y2;
-  mrb_value kwargs = mrb_nil_value();
-  mrb_get_args(mrb, "iiii|H", &x1, &y1, &x2, &y2, &kwargs);
-
-  // Get color from args or canvas
   mrb_int color = -1;
-  if (!mrb_nil_p(kwargs)) {
-    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
-    color = mrb_fixnum(mrb_color);
-  }
-  if (color == -1) color = canvas.fill_color;
+  mrb_get_args(mrb, "iiii|i", &x1, &y1, &x2, &y2, &color);
+  if (color == -1) color = canvas.current_color;
 
   c_canvas_line(mrb, &canvas, x1, y1, x2, y2, color);
+
   return mrb_nil_value();
 }
 
 //
-// #rectangle
+// #_rectangle
 //
 static mrb_value
 mrb_canvas_rectangle(mrb_state* mrb, mrb_value self) {
@@ -204,28 +231,35 @@ mrb_canvas_rectangle(mrb_state* mrb, mrb_value self) {
   mrb_get_canvas_data(mrb, self, &canvas);
 
   // Get args
-  mrb_int x, y, w, h;
-  mrb_value kwargs = mrb_nil_value();
-  mrb_get_args(mrb, "iiii|H", &x, &y, &w, &h, &kwargs);
-
-  // Get color from args or canvas
-  mrb_int color = -1;
-  if (!mrb_nil_p(kwargs)) {
-    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
-    color = mrb_fixnum(mrb_color);
-  }
-  if (color == -1) color = canvas.fill_color;
+  mrb_int x1, y1, x2, y2;
+  mrb_bool filled = FALSE;
+  mrb_int  color  = -1;
+  mrb_get_args(mrb, "iiii|bi", &x1, &y1, &x2, &y2, &filled, &color);
+  if (color == -1) color = canvas.current_color;
 
   // Rectangles and squares as a combination of lines.
-  c_canvas_line(mrb, &canvas, x,   y,   x+w,  y,    color);
-  c_canvas_line(mrb, &canvas, x+w, y,   x+w,  y+h,  color);
-  c_canvas_line(mrb, &canvas, x+w, y+h, x,    y+h,  color);
-  c_canvas_line(mrb, &canvas, x,   y+h, x,    y,    color);
+  if (filled) {
+    mrb_int yt;
+    if (y2 < y1) {
+      yt = y2;
+      y2 = y1;
+      y1 = yt;
+    }
+    for(int y=y1; y<=y2; y++) {
+      c_canvas_line(mrb, &canvas, x1, y, x2, y, color);
+    }
+  } else {
+    c_canvas_line(mrb, &canvas, x1, y1, x2, y1, color);
+    c_canvas_line(mrb, &canvas, x2, y1, x2, y2, color);
+    c_canvas_line(mrb, &canvas, x2, y2, x1, y2, color);
+    c_canvas_line(mrb, &canvas, x1, y2, x1, y1, color);
+  }
+
   return mrb_nil_value();
 }
 
 //
-// #path
+// #_path
 //
 static mrb_value
 mrb_canvas_path(mrb_state* mrb, mrb_value self) {
@@ -235,16 +269,9 @@ mrb_canvas_path(mrb_state* mrb, mrb_value self) {
 
   // Get args
   mrb_value mrb_points;
-  mrb_value kwargs = mrb_nil_value();
-  mrb_get_args(mrb, "o|H", &mrb_points, &kwargs);
-
-  // Get color from args or canvas
   mrb_int color = -1;
-  if (!mrb_nil_p(kwargs)) {
-    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
-    color = mrb_fixnum(mrb_color);
-  }
-  if (color == -1) color = canvas.fill_color;
+  mrb_get_args(mrb, "A|i", &mrb_points, &color);
+  if (color == -1) color = canvas.current_color;
 
   mrb_int point_count = RARRAY_LEN(mrb_points);
   mrb_int x1;
@@ -265,8 +292,11 @@ mrb_canvas_path(mrb_state* mrb, mrb_value self) {
   }
 }
 
+//
+// #_ellipse
+//
 static void
-c_canvas_ellipse(mrb_state* mrb, canvas_t* c, int x_center, int y_center, int a, int b, int color, int filled) {
+c_canvas_ellipse(mrb_state* mrb, canvas_t* c, int x_center, int y_center, int a, int b, int filled, int color) {
   // Start position
   int x = -a;
   int y = 0;
@@ -289,10 +319,10 @@ c_canvas_ellipse(mrb_state* mrb, canvas_t* c, int x_center, int y_center, int a,
       c_canvas_line(mrb, c, x_center - x, y_center - y, x_center + x, y_center - y, color);
     } else {
       // Stroke quadrants in order, as if y-axis is reversed and going counter-clockwise from +ve X.
-      c_canvas_pixel(mrb, c, x_center - x, y_center - y, color);
-      c_canvas_pixel(mrb, c, x_center + x, y_center - y, color);
-      c_canvas_pixel(mrb, c, x_center + x, y_center + y, color);
-      c_canvas_pixel(mrb, c, x_center - x, y_center + y, color);
+      c_canvas_set_pixel(mrb, c, x_center - x, y_center - y, color);
+      c_canvas_set_pixel(mrb, c, x_center + x, y_center - y, color);
+      c_canvas_set_pixel(mrb, c, x_center + x, y_center + y, color);
+      c_canvas_set_pixel(mrb, c, x_center - x, y_center + y, color);
     }
 
     e2 = 2 * e1;
@@ -311,8 +341,8 @@ c_canvas_ellipse(mrb_state* mrb, canvas_t* c, int x_center, int y_center, int a,
   // Continue if y hasn't reached the vertical size
   while (y < b) {
     y += 1;
-    c_canvas_pixel(mrb, c, x_center, y_center + y, color);
-    c_canvas_pixel(mrb, c, x_center, y_center - y, color);
+    c_canvas_set_pixel(mrb, c, x_center, y_center + y, color);
+    c_canvas_set_pixel(mrb, c, x_center, y_center - y, color);
   }
 }
 
@@ -324,30 +354,21 @@ mrb_canvas_ellipse(mrb_state* mrb, mrb_value self) {
 
   // Get args
   mrb_int x_center, y_center, a, b;
-  mrb_value kwargs = mrb_nil_value();
-  mrb_get_args(mrb, "iiii|H", &x_center, &y_center, &a, &b, &kwargs);
-
-  // Get color from args or canvas
-  mrb_int color = -1;
-  if (!mrb_nil_p(kwargs)) {
-    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
-    color = mrb_fixnum(mrb_color);
-  }
-  if (color == -1) color = canvas.fill_color;
-
-  // Get filled from args or default false;
   mrb_bool filled = FALSE;
-  if (!mrb_nil_p(kwargs)) {
-    mrb_value mrb_filled = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "filled")), mrb_false_value());
-    filled = mrb_bool(mrb_filled);
-  }
+  mrb_int  color  = -1;
+  mrb_get_args(mrb, "iiii|bi", &x_center, &y_center, &a, &b, &filled, &color);
+  if (color == -1) color = canvas.current_color;
 
-  c_canvas_ellipse(mrb, &canvas, x_center, y_center, a, b, color, filled);
+  c_canvas_ellipse(mrb, &canvas, x_center, y_center, a, b, filled, color);
+
   return mrb_nil_value();
 }
 
+//
+// #_draw_char
+//
 static mrb_value
-mrb_canvas_raw_char(mrb_state* mrb, mrb_value self) {
+mrb_canvas_draw_char(mrb_state* mrb, mrb_value self) {
   // Get canvas ivars
   canvas_t canvas;
   mrb_get_canvas_data(mrb, self, &canvas);
@@ -355,16 +376,9 @@ mrb_canvas_raw_char(mrb_state* mrb, mrb_value self) {
   // Get args
   mrb_value char_bytes;
   mrb_int x, y, width, scale;
-  mrb_value kwargs = mrb_nil_value();
-  mrb_get_args(mrb, "oiiii|H", &char_bytes, &x, &y, &width, &scale, &kwargs);
-
-  // Get color from args or canvas
-  mrb_int color = -1;
-  if (!mrb_nil_p(kwargs)) {
-    mrb_value mrb_color = mrb_hash_fetch(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")), mrb_fixnum_value(-1));
-    color = mrb_fixnum(mrb_color);
-  }
-  if (color == -1) color = canvas.fill_color;
+  mrb_int  color = -1;
+  mrb_get_args(mrb, "Aiiii|i", &char_bytes, &x, &y, &width, &scale, &color);
+  if (color == -1) color = canvas.current_color;
 
   // How many total bytes
   mrb_int byte_count = RARRAY_LEN(char_bytes);
@@ -383,15 +397,15 @@ mrb_canvas_raw_char(mrb_state* mrb, mrb_value self) {
       // Get it and show the pixels.
       uint8_t bite = (uint8_t)mrb_as_int(mrb, mrb_ary_entry(char_bytes, index));
       for (int bit=0; bit < 8; bit++) {
-        // Is it filled or clear?
-        int color_val = ((bite >> bit) & 0b1) ? color : 0;
-
-        for (int sx=0; sx<scale; sx++){
-          for(int sy=0; sy<scale; sy++){
-            c_canvas_pixel(mrb, &canvas,
-                           x + (column * scale) + sx,
-                           y_current + (bit * scale) + sy,
-                           color_val);
+        // Don't do anything if this bit isn't set in the font.
+        if (((bite >> bit) & 0b1)) {
+          for (int sx=0; sx<scale; sx++){
+            for(int sy=0; sy<scale; sy++){
+              c_canvas_set_pixel(mrb, &canvas,
+                             x + (column*scale) + sx,
+                             y_current + (bit*scale) + sy,
+                             color);
+            }
           }
         }
       }
@@ -413,12 +427,13 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   struct RClass *mrb_Canvas = mrb_define_class_under(mrb, mrb_Denko_Display, "Canvas", mrb->object_class);
 
   // Optimized pixel methods for Canvas
-  mrb_define_method(mrb, mrb_Canvas, "pixel",       mrb_canvas_pixel,       MRB_ARGS_REQ(2) | MRB_ARGS_OPT(1));
-  mrb_define_method(mrb, mrb_Canvas, "line",        mrb_canvas_line,        MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
-  mrb_define_method(mrb, mrb_Canvas, "rectangle",   mrb_canvas_rectangle,   MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
-  mrb_define_method(mrb, mrb_Canvas, "path",        mrb_canvas_path,        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
-  mrb_define_method(mrb, mrb_Canvas, "ellipse",     mrb_canvas_ellipse,     MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
-  mrb_define_method(mrb, mrb_Canvas, "raw_char",    mrb_canvas_raw_char,    MRB_ARGS_REQ(5) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "_get_pixel",  mrb_canvas_get_pixel,    MRB_ARGS_REQ(2));
+  mrb_define_method(mrb, mrb_Canvas, "_set_pixel",  mrb_canvas_set_pixel,    MRB_ARGS_REQ(2) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "_line",       mrb_canvas_line,         MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "_rectangle",  mrb_canvas_rectangle,    MRB_ARGS_REQ(4) | MRB_ARGS_OPT(2));
+  mrb_define_method(mrb, mrb_Canvas, "_path",       mrb_canvas_path,         MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "_ellipse",    mrb_canvas_ellipse,      MRB_ARGS_REQ(4) | MRB_ARGS_OPT(2));
+  mrb_define_method(mrb, mrb_Canvas, "_draw_char",  mrb_canvas_draw_char,    MRB_ARGS_REQ(5) | MRB_ARGS_OPT(1));
 }
 
 void
