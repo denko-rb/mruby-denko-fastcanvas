@@ -233,7 +233,7 @@ mrb_canvas_rectangle(mrb_state* mrb, mrb_value self) {
   // Get args
   mrb_int x1, y1, x2, y2;
   mrb_bool filled = FALSE;
-  mrb_int  color  = -1;
+  mrb_int color = -1;
   mrb_get_args(mrb, "iiii|bi", &x1, &y1, &x2, &y2, &filled, &color);
   if (color == -1) color = canvas.current_color;
 
@@ -261,6 +261,27 @@ mrb_canvas_rectangle(mrb_state* mrb, mrb_value self) {
 //
 // #_path
 //
+static void
+c_canvas_path(mrb_state* mrb, canvas_t* c, mrb_value mrb_points, int color) {
+  mrb_int point_count = RARRAY_LEN(mrb_points);
+  if (point_count == 0) return;
+
+  mrb_int x1;
+  mrb_int y1;
+  mrb_value point = mrb_ary_entry(mrb_points, 0);
+  mrb_int x2 = mrb_as_int(mrb, mrb_ary_entry(point, 0));
+  mrb_int y2 = mrb_as_int(mrb, mrb_ary_entry(point, 1));
+
+  for (int i=1; i<point_count; i++) {
+    x1 = x2;
+    y1 = y2;
+    point = mrb_ary_entry(mrb_points, i);
+    x2 = mrb_as_int(mrb, mrb_ary_entry(point, 0));
+    y2 = mrb_as_int(mrb, mrb_ary_entry(point, 1));
+    c_canvas_line(mrb, c, x1, y1, x2, y2, color);
+  }
+}
+
 static mrb_value
 mrb_canvas_path(mrb_state* mrb, mrb_value self) {
   // Get canvas ivars
@@ -273,30 +294,117 @@ mrb_canvas_path(mrb_state* mrb, mrb_value self) {
   mrb_get_args(mrb, "A|i", &mrb_points, &color);
   if (color == -1) color = canvas.current_color;
 
+  c_canvas_path(mrb, &canvas, mrb_points, color);
+  return mrb_nil_value();
+}
+
+//
+// #_polygon
+//
+static void
+c_canvas_polygon(mrb_state* mrb, canvas_t* c, mrb_value mrb_points, mrb_bool filled, int color) {
   mrb_int point_count = RARRAY_LEN(mrb_points);
-  mrb_int x1;
-  mrb_int y1;
+  if (point_count == 0) return;
 
-  mrb_value point;
-  point = mrb_ary_entry(mrb_points, 0);
-  mrb_int x2 = mrb_as_int(mrb, mrb_ary_entry(point, 0));
-  mrb_int y2 = mrb_as_int(mrb, mrb_ary_entry(point, 1));
+  if (filled) {
+    // y_min and y_max both start as the first point's y value.
+    mrb_value point = mrb_ary_entry(mrb_points, 0);
+    mrb_int y_min = mrb_as_int(mrb, mrb_ary_entry(point, 1));
+    mrb_int y_max = mrb_as_int(mrb, mrb_ary_entry(point, 1));
 
-  for (int i=1; i<point_count; i++) {
-    x1 = x2;
-    y1 = y2;
-    point = mrb_ary_entry(mrb_points, i);
-    x2 = mrb_as_int(mrb, mrb_ary_entry(point, 0));
-    y2 = mrb_as_int(mrb, mrb_ary_entry(point, 1));
-    c_canvas_line(mrb, &canvas, x1, y1, x2, y2, color);
+    // Separate x and y coords into float arrays, and also find true y_min and y_max.
+    float coords_x[point_count];
+    float coords_y[point_count];
+
+    for (int i=0; i<point_count; i++) {
+      point = mrb_ary_entry(mrb_points, i);
+      int x = mrb_as_int(mrb, mrb_ary_entry(point, 0));
+      int y = mrb_as_int(mrb, mrb_ary_entry(point, 1));
+
+      coords_x[i] = x;
+      coords_y[i] = y;
+
+      if (y < y_min) y_min = y;
+      if (y > y_max) y_max = y;
+    }
+
+    // Cast horizontal ray on each row, storing nodes where it intersects polygon edges.
+    for (int y=y_min; y <= y_max; y++) {
+      // Maximum possible intersections
+      int nodes[point_count*2];
+      int node_count = 0;
+      int i = 0;
+      int j = point_count - 1;
+
+      while (i < point_count) {
+        // First condition excludes horizontal edges.
+        // Second and third check for +ve and -ve intersection respectively.
+        if (coords_y[i] != coords_y[j] && ((coords_y[i] < y && coords_y[j] >= y) || (coords_y[j] < y && coords_y[i] >= y))) {
+          // Interoplate to find the intersection point (node).
+          float x_intersect = coords_x[i] + (float)(y - coords_y[i]) / (coords_y[j] - coords_y[i]) * (coords_x[j] - coords_x[i]);
+          nodes[node_count++] = (int)(x_intersect + 0.5f);
+        }
+        j = i;
+        i++;
+      }
+
+      // Sort the nodes.
+      for (int a=0; a < node_count-1; a++) {
+        for (int b=0; b < node_count-a-1; b++) {
+          if (nodes[b] > nodes[b+1]) {
+            int temp = nodes[b];
+            nodes[b] = nodes[b+1];
+            nodes[b+1] = temp;
+          }
+        }
+      }
+
+      // Take pairs of nodes and fill between them.
+      // This ignores the spaces between odd then even nodes (eg. 1->2), which are outside the polygon.
+      for (int n=0; n < node_count-1; n += 2) {
+        if (n+1 < node_count) {
+          c_canvas_line(mrb, c, nodes[n], y, nodes[n+1], y, color);
+        }
+      }
+    }
   }
+
+  // Stroke regardless, since floating point math misses thin areas of fill.
+  // Use _path to stroke without connecting last back to first.
+  c_canvas_path(mrb, c, mrb_points, color);
+
+  // Connect last to first. NOTE: order is important here.
+  mrb_value first = mrb_ary_entry(mrb_points, 0);
+  mrb_value last  = mrb_ary_entry(mrb_points, point_count-1);
+  int x1 = mrb_as_int(mrb, mrb_ary_entry(last, 0));
+  int y1 = mrb_as_int(mrb, mrb_ary_entry(last, 1));
+  int x2 = mrb_as_int(mrb, mrb_ary_entry(first, 0));
+  int y2 = mrb_as_int(mrb, mrb_ary_entry(first, 1));
+  c_canvas_line(mrb, c, x1, y1, x2, y2, color);
+}
+
+static mrb_value
+mrb_canvas_polygon(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_value mrb_points;
+  mrb_bool filled = FALSE;
+  mrb_int color = -1;
+  mrb_get_args(mrb, "A|bi", &mrb_points, &filled, &color);
+  if (color == -1) color = canvas.current_color;
+
+  c_canvas_polygon(mrb, &canvas, mrb_points, filled, color);
+  return mrb_nil_value();
 }
 
 //
 // #_ellipse
 //
 static void
-c_canvas_ellipse(mrb_state* mrb, canvas_t* c, int x_center, int y_center, int a, int b, int filled, int color) {
+c_canvas_ellipse(mrb_state* mrb, canvas_t* c, int x_center, int y_center, int a, int b, mrb_bool filled, int color) {
   // Start position
   int x = -a;
   int y = 0;
@@ -355,7 +463,7 @@ mrb_canvas_ellipse(mrb_state* mrb, mrb_value self) {
   // Get args
   mrb_int x_center, y_center, a, b;
   mrb_bool filled = FALSE;
-  mrb_int  color  = -1;
+  mrb_int color = -1;
   mrb_get_args(mrb, "iiii|bi", &x_center, &y_center, &a, &b, &filled, &color);
   if (color == -1) color = canvas.current_color;
 
@@ -376,7 +484,7 @@ mrb_canvas_draw_char(mrb_state* mrb, mrb_value self) {
   // Get args
   mrb_value char_bytes;
   mrb_int x, y, width, scale;
-  mrb_int  color = -1;
+  mrb_int color = -1;
   mrb_get_args(mrb, "Aiiii|i", &char_bytes, &x, &y, &width, &scale, &color);
   if (color == -1) color = canvas.current_color;
 
@@ -432,6 +540,7 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   mrb_define_method(mrb, mrb_Canvas, "_line",       mrb_canvas_line,         MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "_rectangle",  mrb_canvas_rectangle,    MRB_ARGS_REQ(4) | MRB_ARGS_OPT(2));
   mrb_define_method(mrb, mrb_Canvas, "_path",       mrb_canvas_path,         MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "_polygon",    mrb_canvas_polygon,      MRB_ARGS_REQ(1) | MRB_ARGS_OPT(2));
   mrb_define_method(mrb, mrb_Canvas, "_ellipse",    mrb_canvas_ellipse,      MRB_ARGS_REQ(4) | MRB_ARGS_OPT(2));
   mrb_define_method(mrb, mrb_Canvas, "_draw_char",  mrb_canvas_draw_char,    MRB_ARGS_REQ(5) | MRB_ARGS_OPT(1));
 }

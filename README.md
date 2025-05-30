@@ -1,11 +1,13 @@
 # mruby-denko-fastcanvas
 
-This mrbgem overrides drawing methods in `Denko::Display::Canvas`, speeding them up with C.
+This mrbgem overrides a subset of low-level drawing methods from `Denko::Display::Canvas`, speeding them up with C, but modifying the same framebuffers created in mruby, and leaving them accessible there.
 
 ## Optimized Methods:
-  - #pixel
-  - #line
-  - #rectangle
-  - #path
-  - #ellipse
-  - #raw_char
+  - #_get_pixel
+  - #_set_pixel
+  - #_line
+  - #_rectangle
+  - #_path
+  - #_polygon
+  - #_ellipse
+  - #_draw_char
