@@ -3,6 +3,7 @@
 #include <mruby/hash.h>
 #include <mruby/variable.h>
 #include <mruby/value.h>
+#include <mruby/string.h>
 #include <stdlib.h>
 #include <stdbool.h>
 
@@ -474,21 +475,10 @@ mrb_canvas_ellipse(mrb_state* mrb, mrb_value self) {
 }
 
 //
-// #_draw_char
+// #_char
 //
-static mrb_value
-mrb_canvas_char(mrb_state* mrb, mrb_value self) {
-  // Get canvas ivars
-  canvas_t canvas;
-  mrb_get_canvas_data(mrb, self, &canvas);
-
-  // Get args
-  mrb_value char_bytes;
-  mrb_int x, y, width, scale;
-  mrb_int color = -1;
-  mrb_get_args(mrb, "Aiiii|i", &char_bytes, &x, &y, &width, &scale, &color);
-  if (color == -1) color = canvas.current_color;
-
+static void
+c_canvas_char(mrb_state* mrb, canvas_t* c, mrb_value char_bytes, int x, int y, int width, int scale, int color) {
   // How many total bytes
   mrb_int byte_count = RARRAY_LEN(char_bytes);
 
@@ -510,10 +500,13 @@ mrb_canvas_char(mrb_state* mrb, mrb_value self) {
         if (((bite >> bit) & 0b1)) {
           for (int sx=0; sx<scale; sx++){
             for(int sy=0; sy<scale; sy++){
-              c_canvas_set_pixel(mrb, &canvas,
-                             x + (column*scale) + sx,
-                             y_current + (bit*scale) + sy,
-                             color);
+              c_canvas_set_pixel(
+                mrb,
+                c,
+                x + (column*scale) + sx,
+                y_current + (bit*scale) + sy,
+                color
+              );
             }
           }
         }
@@ -521,6 +514,81 @@ mrb_canvas_char(mrb_state* mrb, mrb_value self) {
     }
     y_current += (8 * scale);
   }
+}
+
+static mrb_value
+mrb_canvas_char(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_value char_bytes;
+  mrb_int x, y, width, scale;
+  mrb_int color = -1;
+  mrb_get_args(mrb, "Aiiii|i", &char_bytes, &x, &y, &width, &scale, &color);
+  if (color == -1) color = canvas.current_color;
+
+  c_canvas_char(mrb, &canvas, char_bytes, x, y, width, scale, color);
+  return mrb_nil_value();
+}
+
+//
+// #text
+//
+static mrb_value
+mrb_canvas_text(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  // Get args
+  mrb_value str;
+  mrb_value kwargs = mrb_nil_value();
+  mrb_int color = -1;
+  mrb_get_args(mrb, "S|H", &str, &kwargs);
+
+  // Get color kwarg if given
+  if (!mrb_nil_p(kwargs)) {
+    mrb_value color_val = mrb_hash_get(mrb, kwargs, mrb_symbol_value(mrb_intern_lit(mrb, "color")));
+    if (!mrb_nil_p(color_val)) color = mrb_fixnum(color_val);
+  }
+  if (color == -1) color = canvas.current_color;
+
+  // Font ivars
+  mrb_value font_characters   = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@font_characters"));
+  mrb_int font_last_character = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@font_last_character")));
+  mrb_int font_height         = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@font_height")));
+  mrb_int font_scale          = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@font_scale")));
+  mrb_int font_width          = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@font_width")));
+  mrb_value text_cursor       = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@text_cursor"));
+
+  // String vars
+  const char* str_ptr = mrb_string_cstr(mrb, str);
+  mrb_int str_len = RSTRING_LEN(str);
+
+  // Offset by scaled height, since bottom left of char starts at text cursor.
+  mrb_int x = mrb_fixnum(mrb_ary_ref(mrb, text_cursor, 0));
+  mrb_int y = mrb_fixnum(mrb_ary_ref(mrb, text_cursor, 1)) + 1 - (font_height * font_scale);
+
+  // Each char of string
+  for (mrb_int i = 0; i < str_len; i++) {
+    unsigned char ch = (unsigned char)str_ptr[i];
+
+    // 0th character in font is SPACE. Offset ASCII code and show ? if character doesn't exist in font.
+    mrb_int index = ch - 32;
+    if (index < 0 || index > font_last_character) index = 31;
+    mrb_value char_map = mrb_ary_ref(mrb, font_characters, index);
+
+    // Draw it
+    c_canvas_char(mrb, &canvas, char_map, x, y, font_width, font_scale, color);
+
+    // Increment x, scaling width.
+    x += font_width * font_scale;
+  }
+
+  // Update x value of @text_cursor ivar.
+  mrb_ary_set(mrb, text_cursor, 0, mrb_fixnum_value(x));
   return mrb_nil_value();
 }
 
@@ -544,6 +612,7 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   mrb_define_method(mrb, mrb_Canvas, "_polygon",    mrb_canvas_polygon,      MRB_ARGS_REQ(1) | MRB_ARGS_OPT(2));
   mrb_define_method(mrb, mrb_Canvas, "_ellipse",    mrb_canvas_ellipse,      MRB_ARGS_REQ(4) | MRB_ARGS_OPT(2));
   mrb_define_method(mrb, mrb_Canvas, "_char",       mrb_canvas_char,         MRB_ARGS_REQ(5) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "text",        mrb_canvas_text,         MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
 }
 
 void

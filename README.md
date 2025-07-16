@@ -10,4 +10,5 @@ This mrbgem overrides a subset of low-level drawing methods from `Denko::Display
   - #_path
   - #_polygon
   - #_ellipse
-  - #_draw_char
+  - #_char
+  - #text
