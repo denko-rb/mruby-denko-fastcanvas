@@ -4,6 +4,7 @@
 #include <mruby/variable.h>
 #include <mruby/value.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 // C struct to avoid constantly getting ivars.
 typedef struct {
@@ -476,7 +477,7 @@ mrb_canvas_ellipse(mrb_state* mrb, mrb_value self) {
 // #_draw_char
 //
 static mrb_value
-mrb_canvas_draw_char(mrb_state* mrb, mrb_value self) {
+mrb_canvas_char(mrb_state* mrb, mrb_value self) {
   // Get canvas ivars
   canvas_t canvas;
   mrb_get_canvas_data(mrb, self, &canvas);
@@ -542,7 +543,7 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   mrb_define_method(mrb, mrb_Canvas, "_path",       mrb_canvas_path,         MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "_polygon",    mrb_canvas_polygon,      MRB_ARGS_REQ(1) | MRB_ARGS_OPT(2));
   mrb_define_method(mrb, mrb_Canvas, "_ellipse",    mrb_canvas_ellipse,      MRB_ARGS_REQ(4) | MRB_ARGS_OPT(2));
-  mrb_define_method(mrb, mrb_Canvas, "_draw_char",  mrb_canvas_draw_char,    MRB_ARGS_REQ(5) | MRB_ARGS_OPT(1));
+  mrb_define_method(mrb, mrb_Canvas, "_char",       mrb_canvas_char,         MRB_ARGS_REQ(5) | MRB_ARGS_OPT(1));
 }
 
 void
