@@ -6,6 +6,7 @@
 #include <mruby/string.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 
 // C struct to avoid constantly getting ivars.
 typedef struct {
@@ -37,6 +38,48 @@ mrb_get_canvas_data(mrb_state* mrb, mrb_value self, canvas_t* canvas) {
 }
 
 //
+// #clear
+//
+static mrb_value
+mrb_canvas_clear(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  for(int i=1; i <= canvas.colors; i++) {
+    mrb_value fb = mrb_ary_ref(mrb, canvas.framebuffers, i-1);
+    uint8_t* fb_data = (uint8_t*)RSTRING_PTR(fb);
+    mrb_int fb_size = RSTRING_LEN(fb);
+    memset(fb_data, 0, fb_size);
+  }
+  return mrb_nil_value();
+}
+
+//
+// #fill
+//
+static mrb_value
+mrb_canvas_fill(mrb_state* mrb, mrb_value self) {
+  // Get canvas ivars
+  canvas_t canvas;
+  mrb_get_canvas_data(mrb, self, &canvas);
+
+  for(int i=1; i <= canvas.colors; i++) {
+    mrb_value fb = mrb_ary_ref(mrb, canvas.framebuffers, i-1);
+    uint8_t* fb_data = (uint8_t*)RSTRING_PTR(fb);
+    mrb_int fb_size = RSTRING_LEN(fb);
+    if (i == 1) {
+      // color = 1 means 0th buffer (black). Fill with 255.
+      memset(fb_data, 255, fb_size);    
+    } else {
+      // Clear others with 0.
+      memset(fb_data, 0, fb_size);
+    }
+  }
+  return mrb_nil_value();
+}
+
+//
 // #_get_pixel
 //
 static int
@@ -50,8 +93,8 @@ c_canvas_get_pixel(mrb_state* mrb, canvas_t* c, int x, int y) {
   // Check all the framebuffers. If bit set, color is i.
   for(int i=1; i <= c->colors; i++) {
     mrb_value fb = mrb_ary_ref(mrb, c->framebuffers, i-1);
-    mrb_value mrb_fb_byte = mrb_ary_ref(mrb, fb, byte_index);
-    mrb_int fb_byte = mrb_fixnum(mrb_fb_byte);
+    uint8_t* fb_data = (uint8_t*)RSTRING_PTR(fb);
+    uint8_t fb_byte = fb_data[byte_index];
     if ((fb_byte >> bit) & 0b1) {
       color = i;
       break;
@@ -100,8 +143,8 @@ c_canvas_set_pixel(mrb_state* mrb, canvas_t* c, int x, int y, int color) {
   // Colors are 1-indexed so "0" means blank/clear.
   for(int i=1; i <= c->colors; i++) {
     mrb_value fb = mrb_ary_ref(mrb, c->framebuffers, i-1);
-    mrb_value mrb_fb_byte = mrb_ary_ref(mrb, fb, byte_index);
-    mrb_int fb_byte = mrb_fixnum(mrb_fb_byte);
+    uint8_t* fb_data = (uint8_t*)RSTRING_PTR(fb);
+    uint8_t fb_byte = fb_data[byte_index];
 
     // Set pixel in fb for given color
     if (i == color) {
@@ -110,7 +153,7 @@ c_canvas_set_pixel(mrb_state* mrb, canvas_t* c, int x, int y, int color) {
     } else {
       fb_byte = fb_byte & ~(0b1 << bit);
     }
-    mrb_ary_set(mrb, fb, byte_index, mrb_fixnum_value(fb_byte));
+    fb_data[byte_index] = fb_byte;
   }
 }
 
@@ -604,6 +647,8 @@ mrb_mruby_denko_fastcanvas_gem_init(mrb_state* mrb) {
   struct RClass *mrb_Canvas = mrb_define_class_under(mrb, mrb_Denko_Display, "Canvas", mrb->object_class);
 
   // Optimized pixel methods for Canvas
+  mrb_define_method(mrb, mrb_Canvas, "fill",        mrb_canvas_fill,         MRB_ARGS_NONE());
+  mrb_define_method(mrb, mrb_Canvas, "clear",       mrb_canvas_clear,        MRB_ARGS_NONE());
   mrb_define_method(mrb, mrb_Canvas, "_get_pixel",  mrb_canvas_get_pixel,    MRB_ARGS_REQ(2));
   mrb_define_method(mrb, mrb_Canvas, "_set_pixel",  mrb_canvas_set_pixel,    MRB_ARGS_REQ(2) | MRB_ARGS_OPT(1));
   mrb_define_method(mrb, mrb_Canvas, "_line",       mrb_canvas_line,         MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
